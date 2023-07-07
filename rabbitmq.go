@@ -7,25 +7,39 @@ import (
 	"github.com/streadway/amqp"
 )
 
+// 调用消费者返回的回调函数，返回的值就是消息内容
+// msg 消息内容
 type Callback func(msg string)
 
+// 默认rabbitmq的链接地址&账号密码
 var (
-	name      = "guest"
-	passwored = "guest"
-	host      = "localhost"
-	port      = 5672
+	host     = "localhost"
+	port     = 5672
+	name     = "guest"
+	password = "guest"
 )
 
-func Connect() (*amqp.Connection, error) {
+// 进行初始化rabbitmq的链接信息，如果不初始化则使用默认的数据
+func InitConfig(rabbitMqHost string, rabbitMqPort int, rabbitMqName string, rabbitMqPassword string) {
+	host = rabbitMqHost
+	port = rabbitMqPort
+	name = rabbitMqName
+	password = rabbitMqPassword
+}
+
+// 链接rabbitmq
+func Connect(name, password, host string, port int) (*amqp.Connection, error) {
 	//消费者读配置信息的值会报错
-	conn, err := amqp.Dial(fmt.Sprintf("amqp://%s:%s@%s:%d/", name, passwored, host, port))
+	conn, err := amqp.Dial(fmt.Sprintf("amqp://%s:%s@%s:%d/", name, password, host, port))
 	return conn, err
 }
 
-// 发送端函数
-func Publish(exchange string, queueName string, body string) error {
+// PublishQueue 简单模式之生产者，直接把消息推送到队列中
+// queueName 队列名
+// body消息内容
+func PublishQueue(queueName string, body string) error {
 	//建立连接
-	conn, err := Connect()
+	conn, err := Connect(name, password, host, port)
 	if err != nil {
 		return err
 	}
@@ -50,33 +64,39 @@ func Publish(exchange string, queueName string, body string) error {
 		nil,   //其它配置
 	)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	//发送消息
 	//exchange 交换机的名称
-	err = channel.Publish(exchange, q.Name, false, false, amqp.Publishing{
+	err = channel.Publish("", q.Name, false, false, amqp.Publishing{
 		DeliveryMode: amqp.Persistent, //amqp.Persistent 设置为持久化消息
 		ContentType:  "text/plain",
 		Body:         []byte(body),
 	})
-	panic(err)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
-// 接收者方法
-func Consumer(exchange string, queueName string, callback Callback) {
+// ConsumerQueue 简单模式之消费者，直接从队列中读取消息进行消费
+// queueName 队列名
+// callback回调函数
+func ConsumerQueue(queueName string, callback Callback) error {
 	//建立连接
-	conn, err := Connect()
+	conn, err := Connect(name, password, host, port)
 	defer conn.Close()
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	//创建通道channel
 	channel, err := conn.Channel()
 	defer channel.Close()
 	if err != nil {
-		panic(err)
+		return err
 	}
 	//创建queue
 	q, err := channel.QueueDeclare(
@@ -88,14 +108,14 @@ func Consumer(exchange string, queueName string, callback Callback) {
 		nil,
 	)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	//channel.Consume 从队列中获取数据
 	//第三个参数是否自动应答案 false 则为手动应答
 	msgs, err := channel.Consume(q.Name, "", false, false, false, false, nil)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	//在起一个channel（不退出）
 	//通道的发送使用特殊的操作符<-，将数据通过通道发送的格式为
@@ -113,35 +133,29 @@ func Consumer(exchange string, queueName string, callback Callback) {
 	}()
 	fmt.Printf("Waiting for messages")
 	<-forever
-}
-
-// 转换成string型
-func BytesToString(b *[]byte) *string {
-	s := bytes.NewBuffer(*b)
-	r := s.String()
-	return &r
+	return nil
 }
 
 // 发布订阅模式 生产端
 // exchange 交换机的名字
 // types 交换机的类型
-func PublishEx(exchange string, types string, routingKey string, body string) error {
+func PublishExChange(exchangeName string, types string, routingKey string, body string) error {
 	//建立连接
-	conn, err := Connect()
+	conn, err := Connect(name, password, host, port)
 	defer conn.Close()
 	if err != nil {
-		panic(err)
+		return err
 	}
 	//创建channel
 	channel, err := conn.Channel()
 	defer channel.Close()
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	//创建交换机
 	err = channel.ExchangeDeclare(
-		exchange,
+		exchangeName,
 		types,
 		true,
 		false,
@@ -153,33 +167,35 @@ func PublishEx(exchange string, types string, routingKey string, body string) er
 		return err
 	}
 
-	err = channel.Publish(exchange, routingKey, false, false, amqp.Publishing{
+	err = channel.Publish(exchangeName, routingKey, false, false, amqp.Publishing{
 		DeliveryMode: amqp.Persistent, //持久化
 		ContentType:  "text/plain",
 		Body:         []byte(body),
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // 发布订阅模式 消费端
-func ConsumerEx(exchange string, types string, routingKey string, callback Callback) {
+func ConsumerExChange(exchangeName string, types string, routingKey string, callback Callback) error {
 	//建立连接
-	conn, err := Connect()
+	conn, err := Connect(name, password, host, port)
 	defer conn.Close()
 	if err != nil {
-		panic(err)
+		return err
 	}
 	//创建通道channel
 	channel, err := conn.Channel()
 	defer channel.Close()
 	if err != nil {
-		//如果有问题进行打印出来
-		panic(err)
+		return err
 	}
 
 	//创建交换机
 	err = channel.ExchangeDeclare(
-		exchange,
+		exchangeName,
 		types,
 		true,
 		false,
@@ -188,8 +204,7 @@ func ConsumerEx(exchange string, types string, routingKey string, callback Callb
 		nil,
 	)
 	if err != nil {
-		fmt.Println(err)
-		return
+		return err
 	}
 
 	//创建队列
@@ -202,24 +217,24 @@ func ConsumerEx(exchange string, types string, routingKey string, callback Callb
 		nil,
 	)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	//队列创建完成之后 队列要与交换机绑定起来
 	err = channel.QueueBind(
 		q.Name,
 		routingKey,
-		exchange,
+		exchangeName,
 		false,
 		nil,
 	)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	msgs, err := channel.Consume(q.Name, "", false, false, false, false, nil)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	forever := make(chan bool)
@@ -232,6 +247,7 @@ func ConsumerEx(exchange string, types string, routingKey string, callback Callb
 	}()
 	fmt.Printf("Waiting for messages\n")
 	<-forever
+	return nil
 }
 
 // 死信队列生产端
@@ -239,7 +255,7 @@ func ConsumerEx(exchange string, types string, routingKey string, callback Callb
 // body 信息
 func PublishDlx(exchangeA string, body string) error {
 	//建立连接
-	conn, err := Connect()
+	conn, err := Connect(name, password, host, port)
 	if err != nil {
 		return err
 	}
@@ -248,7 +264,7 @@ func PublishDlx(exchangeA string, body string) error {
 	//创建一个Channel
 	channel, err := conn.Channel()
 	if err != nil {
-		panic(err)
+		return err
 	}
 	defer channel.Close()
 
@@ -259,23 +275,25 @@ func PublishDlx(exchangeA string, body string) error {
 		Body:         []byte(body), //消息内容
 	})
 
-	panic(err)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // 死信队列消费端
-func ConsumerDlx(exchangeA string, queueAName string, exchangeB string, queueBName string, ttl int, callback Callback) {
+func ConsumerDlx(exchangeA string, queueAName string, exchangeB string, queueBName string, ttl int, callback Callback) error {
 	//建立连接
-	conn, err := Connect()
+	conn, err := Connect(name, password, host, port)
 	if err != nil {
-		fmt.Println(err)
-		return
+		return err
 	}
 	defer conn.Close()
 
 	//创建一个Channel
 	channel, err := conn.Channel()
 	if err != nil {
-		panic(err)
+		return err
 	}
 	defer channel.Close()
 
@@ -292,7 +310,7 @@ func ConsumerDlx(exchangeA string, queueAName string, exchangeB string, queueBNa
 		nil,       // arguments
 	)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	//创建一个A队列 queue，指定消息过期时间，并且绑定过期以后发送到那个交换机
@@ -311,7 +329,7 @@ func ConsumerDlx(exchangeA string, queueAName string, exchangeB string, queueBNa
 		},
 	)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	//A交换机和A队列绑定
@@ -323,7 +341,7 @@ func ConsumerDlx(exchangeA string, queueAName string, exchangeB string, queueBNa
 		nil,
 	)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	//A交换机和A队列操作完成了，接下来
@@ -340,8 +358,7 @@ func ConsumerDlx(exchangeA string, queueAName string, exchangeB string, queueBNa
 		nil,       // arguments
 	)
 	if err != nil {
-		fmt.Println(err)
-		return
+		return err
 	}
 
 	//创建一个queue
@@ -354,7 +371,7 @@ func ConsumerDlx(exchangeA string, queueAName string, exchangeB string, queueBNa
 		nil,        // arguments
 	)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	//B交换机和B队列绑定
@@ -366,13 +383,13 @@ func ConsumerDlx(exchangeA string, queueAName string, exchangeB string, queueBNa
 		nil,
 	)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	//接收消息 B交换机在接收B队列的信息，不是接收A队列的信息
 	msgs, err := channel.Consume(queueB.Name, "", false, false, false, false, nil)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	forever := make(chan bool)
@@ -386,4 +403,12 @@ func ConsumerDlx(exchangeA string, queueAName string, exchangeB string, queueBNa
 
 	fmt.Printf(" [*] Waiting for messages. To exit press CTRL+C\n")
 	<-forever
+	return nil
+}
+
+// 转换成string型
+func BytesToString(b *[]byte) *string {
+	s := bytes.NewBuffer(*b)
+	r := s.String()
+	return &r
 }
